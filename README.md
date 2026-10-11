@@ -1,5 +1,7 @@
 # 羽毛球俱乐部
 
+中文 | [English](README.en.md)
+
 完全离线的羽毛球俱乐部活动 App（Android / Kotlin / Jetpack Compose）。不需要网络、不注册账号，所有数据保存在手机本地。支持多俱乐部、多场地、中英文界面。
 
 主要功能：
