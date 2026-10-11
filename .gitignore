@@ -1,0 +1,14 @@
+AGENTS.md
+.DS_Store
+local.properties
+.gradle/
+.kotlin/
+build/
+app/build/
+core/build/
+badminton-keystore.jks
+keystore.properties
+data/
+/badminton/
+.idea/
+gradle/gradle-daemon-jvm.properties
