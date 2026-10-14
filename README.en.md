@@ -24,7 +24,7 @@ The app is not on any app store and does not auto-update. To upgrade, repeat the
 
 ## Usage
 
-On first launch, create a club. Everything then lives in four pages (switch via the bottom/side menu):
+On first launch, create a club. Everything then lives in five pages (switch via the bottom/side menu):
 
 ### Tonight
 
@@ -48,6 +48,10 @@ Switch between the four standings boards. Each member's rating on each board is 
 
 Filter matches by "All / Today / 7 days / 30 days / custom", optionally for a single player; each entry shows the score, winner, duration, and rating changes.
 
+### Data sync
+
+"Export data" bundles everything into a zip backup you can save locally or on Google Drive; "Import data" restores a backup by overwriting this device's data. Tapping a button opens the system picker directly to choose a location/file; cancelling in the picker or during execution shows a “Cancelled” toast and returns you to the main page, as does finishing.
+
 ## Language
 
 Switch between 中文 / English anytime in the menu.
@@ -55,8 +59,8 @@ Switch between 中文 / English anytime in the menu.
 ## Data
 
 - Data lives in the app's private directory (`/data/data/com.badminton.club/files/data/`) as JSON: `clubs.json` plus per-club `members.json` / `attendance.json` / `settings.json` / `matches.json`
-- **No internet permission** — data is never uploaded, and uninstalling the app deletes it. Keep a copy of anything important (exporting requires root or a debug build)
-- Moving to a new phone requires manual migration; there is no in-app backup / restore yet
+- **No internet permission** — data is never uploaded, and uninstalling the app deletes it. Keep a copy of anything important with the export feature below
+- Backup / moving phones: “Export data” on the Data sync tab bundles everything into a zip (saved on this phone or Google Drive); on the new device, install the app and tap “Import data” to pick that file. **Importing completely overwrites the data on this device — no merging**
 
 ## Building from source
 

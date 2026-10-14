@@ -2,10 +2,16 @@ package com.badminton.club.core
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.UUID
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 class DuplicateNameException(message: String) : IllegalArgumentException(message)
 
@@ -227,6 +233,78 @@ class Storage(val dataDir: File) {
         val attendance = loadAttendance(clubId).toMutableMap()
         attendance[date] = memberIds
         saveAttendance(clubId, attendance)
+    }
+
+    fun exportBytes(): ByteArray {
+        val base = dataDir.absoluteFile
+        if (!File(base, "clubs.json").exists()) {
+            throw IllegalArgumentException("no data to export")
+        }
+        val bos = ByteArrayOutputStream()
+        ZipOutputStream(bos).use { zos ->
+            base.walkTopDown()
+                .filter { it.isFile && !it.name.endsWith(".tmp") }
+                .sortedBy { it.path }
+                .forEach { f ->
+                    zos.putNextEntry(ZipEntry(f.relativeTo(base).invariantSeparatorsPath))
+                    f.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
+        }
+        return bos.toByteArray()
+    }
+
+    fun importBytes(bytes: ByteArray) {
+        val parent = dataDir.parentFile ?: throw IllegalArgumentException("no data directory")
+        val stage = File(parent, dataDir.name + ".import")
+        val old = File(parent, dataDir.name + ".old")
+        try {
+            if (stage.exists()) stage.deleteRecursively()
+            stage.mkdirs()
+            extractAndValidate(bytes, stage)
+            if (old.exists()) old.deleteRecursively()
+            val movedOld = dataDir.exists() && dataDir.renameTo(old)
+            if (dataDir.exists() && !movedOld) {
+                throw IOException("cannot replace existing data")
+            }
+            if (!stage.renameTo(dataDir)) {
+                if (movedOld) old.renameTo(dataDir)
+                throw IOException("cannot apply imported data")
+            }
+            old.deleteRecursively()
+        } catch (e: IllegalArgumentException) {
+            stage.deleteRecursively()
+            throw e
+        } catch (e: Exception) {
+            stage.deleteRecursively()
+            throw IllegalArgumentException("cannot import backup: ${e.message ?: e}", e)
+        }
+    }
+
+    private fun extractAndValidate(bytes: ByteArray, stage: File) {
+        var files = 0
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zis ->
+            var entry = zis.nextEntry
+            while (entry != null) {
+                if (!entry.isDirectory) {
+                    val out = File(stage, entry.name)
+                    val root = stage.canonicalFile
+                    if (!out.canonicalFile.path.startsWith(root.path + File.separator)) {
+                        throw IllegalArgumentException("invalid path in backup")
+                    }
+                    out.parentFile?.mkdirs()
+                    out.outputStream().use { zis.copyTo(it) }
+                    files++
+                }
+                zis.closeEntry()
+                entry = zis.nextEntry
+            }
+        }
+        if (files == 0) throw IllegalArgumentException("not a backup archive")
+        val clubsFile = File(stage, "clubs.json")
+        if (!clubsFile.exists()) throw IllegalArgumentException("backup is missing clubs.json")
+        val clubs: List<Club> = json.decodeFromString(clubsFile.readText())
+        if (clubs.isEmpty()) throw IllegalArgumentException("backup contains no clubs")
     }
 
     companion object {

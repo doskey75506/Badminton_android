@@ -7,6 +7,10 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.ByteArrayOutputStream
+import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class StorageTest {
     @get:Rule
@@ -144,5 +148,89 @@ class StorageTest {
         assertEquals(listOf(m1.id, m2.id), storage.getAttendance(club.id, "2026-10-09"))
         storage.deleteMember(club.id, m1.id)
         assertEquals(listOf(m2.id), storage.getAttendance(club.id, "2026-10-09"))
+    }
+
+    @Test
+    fun exportImportRoundtrip() {
+        val club = storage.createClub("测试俱乐部")
+        val m = storage.addMember(club.id, "张三", 1200.0, gender = "f")
+        storage.setSettings(club.id, Settings(courts = 5))
+        storage.setAttendance(club.id, "2026-10-09", listOf(m.id))
+        storage.addMatch(
+            club.id, "2026-10-09", 1,
+            listOf("a"), listOf("b"), emptyMap(), emptyMap(),
+        )
+
+        val bytes = storage.exportBytes()
+        val fresh = Storage(tmp.newFolder("fresh"))
+        fresh.importBytes(bytes)
+
+        assertEquals(listOf("测试俱乐部"), fresh.listClubs().map { it.name })
+        assertEquals(5, fresh.getSettings(club.id).courts)
+        assertEquals(listOf("张三"), fresh.loadMembers(club.id).map { it.name })
+        assertEquals(
+            1200.0,
+            fresh.membersById(club.id).getValue(m.id).ratings.getValue("open_double"),
+            0.0,
+        )
+        assertEquals(listOf(m.id), fresh.getAttendance(club.id, "2026-10-09"))
+        assertEquals(1, fresh.loadMatches(club.id).size)
+        assertEquals(listOf("测试俱乐部"), storage.listClubs().map { it.name })
+    }
+
+    @Test
+    fun importFullyOverwritesExistingData() {
+        val src = Storage(tmp.newFolder("src"))
+        val club = src.createClub("来源")
+        src.addMember(club.id, "甲")
+
+        val dstDir = tmp.newFolder("dst")
+        val dst = Storage(dstDir)
+        val stale = dst.createClub("本机旧数据")
+        dst.addMember(stale.id, "路人")
+
+        dst.importBytes(src.exportBytes())
+
+        assertEquals(listOf("来源"), dst.listClubs().map { it.name })
+        assertEquals(listOf("甲"), dst.loadMembers(club.id).map { it.name })
+        assertTrue(dst.loadMembers(stale.id).isEmpty())
+        assertTrue(!File(dstDir, "clubs/${stale.id}").exists())
+    }
+
+    @Test
+    fun importRejectsInvalidBackupAndKeepsData() {
+        val keeper = storage.createClub("keep")
+
+        val badZip = ByteArrayOutputStream().also { bos ->
+            ZipOutputStream(bos).use { zos ->
+                zos.putNextEntry(ZipEntry("foo.txt"))
+                zos.write("hello".toByteArray())
+                zos.closeEntry()
+            }
+        }.toByteArray()
+
+        val target = Storage(tmp.newFolder("target"))
+        target.createClub("mine")
+        for (bad in listOf(ByteArray(0), "not a zip".toByteArray(), badZip)) {
+            try {
+                target.importBytes(bad)
+                fail("expected IllegalArgumentException")
+            } catch (_: IllegalArgumentException) {
+            }
+        }
+        assertEquals(listOf("mine"), target.listClubs().map { it.name })
+
+        target.importBytes(storage.exportBytes())
+        assertEquals(listOf("keep"), target.listClubs().map { it.name })
+        assertEquals(listOf(keeper.id), target.listClubs().map { it.id })
+    }
+
+    @Test
+    fun exportWithoutDataFails() {
+        try {
+            storage.exportBytes()
+            fail("expected IllegalArgumentException")
+        } catch (_: IllegalArgumentException) {
+        }
     }
 }
