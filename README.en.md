@@ -7,8 +7,8 @@ Fully offline badminton club app for Android (Kotlin / Jetpack Compose). No netw
 Main features:
 
 - **Members**: record name, gender, and initial rating
-- **Tonight**: one-tap check-in; automatically generates balanced pairings for every free court (singles 1v1 / doubles 2v2)
-- **Matches in progress**: substitute players mid-match, enter scores (ratings update automatically), void mistakenly generated matches
+- **Tonight**: wooden peg attendance and drag ordering; automatic singles/doubles or free manual doubles selection from the top N
+- **Matches in progress**: substitute players, tap a court to end with optional scores, void mistakes from Adjust
 - **Four independent standings**: Open Singles / Women's Singles / Open Doubles / Women's Doubles
 - **History**: filter by time range and by player; view scores and rating changes
 
@@ -24,15 +24,17 @@ The app is not on any app store and does not auto-update. To upgrade, repeat the
 
 ## Usage
 
-On first launch, create a club. Everything then lives in five pages (switch via the bottom/side menu):
+On first launch, create a club. Everything then lives in six pages (switch via the bottom/side menu):
 
 ### Tonight
 
 1. At the top, pick the date and set the number of courts (1–12)
-2. Check in whoever is attending tonight. People can arrive or leave at any time — changing the checkmarks does not affect already generated matches
-3. Tap "Generate pairings for N free court(s)" — the system pairs players by **balanced rest time + balanced team ratings**, and matches start automatically
-4. When a match ends, enter both scores (0–30, no ties) and submit — ratings update immediately
-5. "Substitute" swaps any on-court player for a spare on the bench; "Cancel" removes a mistakenly generated match with no score entered
+2. Tap a wooden peg to toggle attendance, or long-press and drag between the ropes. The full-width Attending area is the queue; drop between pegs to insert or reorder. Attendance changes leave existing matches intact
+3. Auto: generate pairings for free courts using **balanced rest time + balanced team ratings**
+4. Manual: set N (default 6, range 4–30), then enter. The queue follows attendance order. Tap or drag any four of the top N into Team A/B slots; Start uses the first free court. Manual mode supports Open or Women's Doubles
+5. Tap a busy court to end the match. Enter both scores (0–30, no ties) to update ratings, or leave both blank to keep an unscored record with no rating changes
+6. Substitute players in auto mode. Adjust edits attendance/order for non-playing members and voids mistaken matches. Finished or voided players return to the manual queue tail in their relative attendance order
+7. Expand Details at the bottom for games and rest times. Changing date or club exits the manual session
 
 Rating balance follows the "match type" selected per court (default Open Doubles); only checked-in players not currently on court enter the pool.
 
@@ -46,7 +48,7 @@ Switch between the four standings boards. Each member's rating on each board is 
 
 ### History
 
-Filter matches by "All / Today / 7 days / 30 days / custom", optionally for a single player; each entry shows the score, winner, duration, and rating changes.
+Filter matches by "All / Today / 7 days / 30 days / custom", optionally for a single player; each entry shows the score, winner, duration, and rating changes. Unscored finishes show “No score” and are excluded from standings results.
 
 ### Data sync
 
@@ -61,6 +63,8 @@ Switch between 中文 / English anytime in the menu.
 - Data lives in the app's private directory (`/data/data/com.badminton.club/files/data/`) as JSON: `clubs.json` plus per-club `members.json` / `attendance.json` / `settings.json` / `matches.json`
 - **No internet permission** — data is never uploaded, and uninstalling the app deletes it. Keep a copy of anything important with the export feature below
 - Backup / moving phones: “Export data” on the Data sync tab bundles everything into a zip (saved on this phone or Google Drive); on the new device, install the app and tap “Import data” to pick that file. **Importing completely overwrites the data on this device — no merging**
+
+Android and iOS can import each other’s zip backups, including attendance order and unscored finished matches.
 
 ## Building from source
 

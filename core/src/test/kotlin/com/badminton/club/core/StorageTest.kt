@@ -97,6 +97,49 @@ class StorageTest {
     }
 
     @Test
+    fun unscoredFinishKeepsHistoryAndRatingsButFreesCourt() {
+        val club = storage.createClub("c")
+        val member = storage.addMember(club.id, "甲", 1200.0)
+        val before = storage.loadMembers(club.id)
+        val match = storage.addMatch(club.id, "2026-11-08", 1,
+            listOf(member.id), listOf("b"), mapOf(member.id to "甲"), mapOf(member.id to 1200.0))
+        storage.finishMatchUnscored(club.id, match.id)
+        val finished = storage.loadMatches(club.id).single()
+        assertTrue(finished.finishedAt != null)
+        assertEquals(match.copy(finishedAt = finished.finishedAt), finished)
+        assertEquals(before, storage.loadMembers(club.id))
+        assertTrue(storage.activeMatches(club.id, match.date).isEmpty())
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            storage.cancelMatch(club.id, match.id)
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            storage.swapMatchPlayers(club.id, match.id, mapOf(member.id to "e"), mapOf("e" to ("乙" to 1000.0)))
+        }
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            storage.finishMatchUnscored(club.id, match.id)
+        }
+        val restored = Storage(tmp.newFolder("unscored"))
+        restored.importBytes(storage.exportBytes())
+        assertEquals(finished, restored.loadMatches(club.id).single())
+        assertTrue(restored.activeMatches(club.id, match.date).isEmpty())
+    }
+
+    @Test
+    fun unscoredFinishRejectsMissingAndScoredMatches() {
+        val club = storage.createClub("c")
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            storage.finishMatchUnscored(club.id, "missing")
+        }
+        val match = storage.addMatch(club.id, "2026-11-08", 1,
+            listOf("a"), listOf("b"), emptyMap(), emptyMap())
+        storage.finishMatch(club.id, match.id, 21, 10, emptyMap())
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            storage.finishMatchUnscored(club.id, match.id)
+        }
+        assertEquals(21, storage.loadMatches(club.id).single().scoreA)
+    }
+
+    @Test
     fun swapPlayers() {
         val club = storage.createClub("c")
         val match = storage.addMatch(
@@ -223,6 +266,30 @@ class StorageTest {
         target.importBytes(storage.exportBytes())
         assertEquals(listOf("keep"), target.listClubs().map { it.name })
         assertEquals(listOf(keeper.id), target.listClubs().map { it.id })
+    }
+
+    @Test
+    fun importsIosUnscoredBackupAndExportsCompatibleRoundtrip() {
+        val bytes = javaClass.getResourceAsStream("/ios-unscored-backup.zip")!!.use { it.readBytes() }
+        val imported = Storage(tmp.newFolder("ios"))
+        imported.importBytes(bytes)
+        val club = imported.listClubs().single()
+        assertEquals("iOS 兼容测试", club.name)
+        val members = imported.loadMembers(club.id)
+        assertEquals(4, members.size)
+        assertTrue(members.all { it.ratings.values.all { r -> r == 1200.0 } })
+        val date = "2026-11-08"
+        assertEquals(members.map { it.id }.reversed(), imported.getAttendance(club.id, date))
+        val match = imported.loadMatches(club.id).single()
+        assertTrue(match.finishedAt != null)
+        assertEquals(null, match.scoreA)
+        assertEquals(null, match.winner)
+        assertEquals(null, match.ratingsAfter)
+        assertTrue(imported.activeMatches(club.id, date).isEmpty())
+        val scored = imported.addMatch(club.id, date, 1, match.teamA, match.teamB, match.names, match.ratingsBefore)
+        imported.finishMatch(club.id, scored.id, 21, 15, emptyMap())
+        // Used by the Swift compatibility smoke check; stays in ignored build output.
+        File("build/ios-roundtrip.zip").writeBytes(imported.exportBytes())
     }
 
     @Test

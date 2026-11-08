@@ -35,6 +35,19 @@ class AppState(storage: Storage, private val prefs: SharedPreferences) {
         Strings.setLanguage(lang)
     }
 
+    var manual by mutableStateOf(com.badminton.club.core.ManualSession())
+    var assignMode by mutableStateOf(0)
+    var manualContext: Pair<String, String>? = null
+
+    fun requeueManual(ids: List<String>, date: String) {
+        manual = manual.requeue(ids, storage.getAttendance(club, date))
+    }
+
+    fun resetManual() {
+        manual = com.badminton.club.core.ManualSession(candidateCount = manual.candidateCount)
+        manualContext = null
+    }
+
     var clubId by mutableStateOf<String?>(null)
     var page by mutableStateOf(0)
     var flash by mutableStateOf("")

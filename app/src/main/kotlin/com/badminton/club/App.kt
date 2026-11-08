@@ -1,6 +1,8 @@
 package com.badminton.club
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -86,10 +88,9 @@ fun BadmintonApp(state: AppState) {
         topBar = {
             TopAppBar(
                 title = {
-                    Text(clubs.firstOrNull { it.id == state.club }?.name ?: "")
+                    ClubMenu(state, clubs, Modifier.fillMaxWidth())
                 },
                 actions = {
-                    ClubMenu(state, clubs)
                     TextButton(onClick = { showNewClub = true }) {
                         Text(T("new_club"))
                     }
@@ -118,7 +119,7 @@ fun BadmintonApp(state: AppState) {
                         selected = state.page == i,
                         onClick = { state.page = i; state.bump() },
                         icon = { Text(icons[i]) },
-                        label = { Text(label) },
+                        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     )
                 }
             }
@@ -138,11 +139,11 @@ fun BadmintonApp(state: AppState) {
 }
 
 @Composable
-private fun ClubMenu(state: AppState, clubs: List<Club>) {
+private fun ClubMenu(state: AppState, clubs: List<Club>, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
     val current = clubs.firstOrNull { it.id == state.club }?.name ?: ""
-    OutlinedButton(onClick = { expanded = true }) {
-        Text("${T("club")}: $current ▾")
+    OutlinedButton(onClick = { expanded = true }, modifier = modifier) {
+        Text("$current ▾", maxLines = 1, overflow = TextOverflow.Ellipsis)
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             clubs.forEach { club ->
                 DropdownMenuItem(

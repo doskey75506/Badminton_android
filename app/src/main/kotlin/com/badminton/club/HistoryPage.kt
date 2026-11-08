@@ -255,7 +255,8 @@ private fun HistoryRow(m: Match) {
             Spacer(Modifier.height(4.dp))
             Text("${T("team_a")}: $teamA", style = MaterialTheme.typography.bodySmall)
             Text(
-                if (m.scoreA != null) "${m.scoreA} : ${m.scoreB}" else T("ongoing"),
+                if (m.scoreA != null) "${m.scoreA} : ${m.scoreB}"
+                else if (m.finishedAt != null) T("no_score") else T("ongoing"),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(vertical = 2.dp),

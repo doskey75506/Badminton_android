@@ -160,6 +160,16 @@ class Storage(val dataDir: File) {
         saveMatches(clubId, matches)
     }
 
+    fun finishMatchUnscored(clubId: String, matchId: String) {
+        val matches = loadMatches(clubId)
+        val target = matches.firstOrNull { it.id == matchId }
+            ?: throw IllegalArgumentException("match not found")
+        require(target.scoreA == null && target.finishedAt == null) { "match already finished" }
+        saveMatches(clubId, matches.map {
+            if (it.id == matchId) it.copy(finishedAt = nowIso()) else it
+        })
+    }
+
     fun swapMatchPlayers(
         clubId: String,
         matchId: String,
@@ -170,7 +180,7 @@ class Storage(val dataDir: File) {
         val idx = matches.indexOfFirst { it.id == matchId }
         require(idx >= 0) { "match not found" }
         val m = matches[idx]
-        require(m.scoreA == null) { "cannot swap a finished match" }
+        require(m.scoreA == null && m.finishedAt == null) { "cannot swap a finished match" }
         require(swaps.isNotEmpty()) { "no players to swap" }
         for (outPid in swaps.keys) {
             require(outPid in m.teamA || outPid in m.teamB) { "player not in match" }
@@ -210,12 +220,12 @@ class Storage(val dataDir: File) {
         val matches = loadMatches(clubId)
         val target = matches.firstOrNull { it.id == matchId }
             ?: throw IllegalArgumentException("match not found")
-        require(target.scoreA == null) { "cannot cancel a finished match" }
+        require(target.scoreA == null && target.finishedAt == null) { "cannot cancel a finished match" }
         saveMatches(clubId, matches.filter { it.id != matchId })
     }
 
     fun activeMatches(clubId: String, date: String): List<Match> =
-        loadMatches(clubId).filter { it.date == date && it.scoreA == null }
+        loadMatches(clubId).filter { it.date == date && it.scoreA == null && it.finishedAt == null }
 
     fun matchesOn(clubId: String, date: String): List<Match> =
         loadMatches(clubId).filter { it.date == date }
