@@ -89,6 +89,7 @@ fun DataSyncPage(state: AppState) {
                         ?: throw IOException("cannot read the selected file")
                 }
                 withContext(Dispatchers.IO) { state.storage.importBytes(bytes) }
+                state.resetManual()
                 state.clubId = null
                 state.flash = T("import_done")
                 state.page = 0

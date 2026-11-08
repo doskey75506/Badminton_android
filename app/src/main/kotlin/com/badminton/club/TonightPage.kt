@@ -7,6 +7,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -54,29 +60,9 @@ private fun fmtTime(iso: String?): String {
     return LocalDateTime.parse(iso).format(timeFmt)
 }
 
-private fun fmtDuration(m: Match): String {
-    val s = m.startedAt ?: return "-"
-    val f = m.finishedAt ?: return "-"
-    val seconds = java.time.Duration.between(LocalDateTime.parse(s), LocalDateTime.parse(f)).seconds
-    return "%02d:%02d".format(seconds / 60, seconds % 60)
-}
-
 private fun joinDeltas(deltas: List<Pair<String, Double>>): String {
     val sep = if (Strings.lang == "zh") "，" else ", "
     return deltas.joinToString(sep) { (n, d) -> "$n ${"%+.1f".format(d)}" }
-}
-
-private fun overallStats(matches: List<Match>): Map<String, Pair<Int, Int>> {
-    val stats = mutableMapOf<String, Pair<Int, Int>>()
-    for (m in matches) {
-        if (m.scoreA == null) continue
-        val winnerTeam = if (m.winner == "A") m.teamA else m.teamB
-        for (pid in m.teamA + m.teamB) {
-            val (played, wins) = stats[pid] ?: (0 to 0)
-            stats[pid] = (played + 1) to (wins + if (pid in winnerTeam) 1 else 0)
-        }
-    }
-    return stats
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,36 +70,40 @@ private fun overallStats(matches: List<Match>): Map<String, Pair<Int, Int>> {
 fun TonightPage(state: AppState) {
     val revision = state.revision
     val club = state.club
+    var showAdjust by remember(club) { mutableStateOf(false) }
+    var endingMatch by remember(club) { mutableStateOf<Match?>(null) }
+    var showDetails by remember { mutableStateOf(false) }
 
     var dateIso by remember { mutableStateOf(LocalDate.now().toString()) }
     val date = LocalDate.parse(dateIso)
+    LaunchedEffect(club, dateIso) {
+        if (state.manualContext != (club to dateIso)) state.resetManual()
+    }
 
-    val settings = remember(revision) { state.storage.getSettings(club) }
-    val sessionStart = remember(settings) {
+    val settings = remember(revision, club) { state.storage.getSettings(club) }
+    val sessionStart = remember(settings, dateIso) {
         settings.nightStarts[dateIso]?.let { LocalDateTime.parse(it) }
     }
     var courtsText by remember(settings.courts) { mutableStateOf(settings.courts.toString()) }
     val nCourts = (courtsText.toIntOrNull() ?: settings.courts).coerceIn(MIN_COURTS, MAX_COURTS)
 
-    val members = remember(revision) { state.storage.membersById(club) }
-    val tonight = remember(revision) { state.storage.matchesOn(club, dateIso) }
-    val activeList = remember(revision) { state.storage.activeMatches(club, dateIso) }
+    val members = remember(revision, club) { state.storage.membersById(club) }
+    val tonight = remember(revision, club, dateIso) { state.storage.matchesOn(club, dateIso) }
+    val activeList = remember(revision, club, dateIso) { state.storage.activeMatches(club, dateIso) }
     val activeByCourt = activeList.associateBy { it.court }
     val onCourt = activeList.flatMap { it.teamA + it.teamB }.toSet()
 
-    val currentAttendance = remember(revision, dateIso) {
-        state.storage.getAttendance(club, dateIso).toSet()
-    }
-    val checkedIds = remember(currentAttendance) {
-        mutableStateOf(currentAttendance.toMutableSet())
-    }
-    val checked = remember(revision, dateIso) {
+    val checked = remember(revision, club, dateIso) {
         if (members.isEmpty()) emptyList()
         else state.storage.getAttendance(club, dateIso)
     }
+    LaunchedEffect(club, dateIso, checked, onCourt) {
+        if (state.manualContext == (club to dateIso)) {
+            state.manual = state.manual.reconcile(checked.filter { it in members }, onCourt)
+        }
+    }
     val available = checked.filter { it !in onCourt }
     val now = LocalDateTime.now()
-    val ordered = members.values.sortedBy { it.name }
 
     var showDatePicker by remember { mutableStateOf(false) }
 
@@ -135,6 +125,50 @@ fun TonightPage(state: AppState) {
         ) {
             DatePicker(state = pickerState)
         }
+    }
+
+    if (showAdjust) {
+        AlertDialog(
+            onDismissRequest = { showAdjust = false },
+            title = { Text(T("adjust_title")) },
+            text = {
+                Column(Modifier.heightIn(max = 600.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(T("adjust_hint"))
+                    AttendancePanel(state, members, checked, onCourt,
+                        activeList.flatMap { m -> (m.teamA + m.teamB).map { it to m.court } }.toMap(), dateIso, true)
+                    activeList.sortedBy { it.court }.forEach { m ->
+                        Text("${T("court")} ${m.court}: " + (m.teamA + m.teamB).joinToString(" / ") { m.names[it] ?: it })
+                        OutlinedButton(onClick = {
+                            state.storage.cancelMatch(club, m.id)
+                            state.requeueManual(m.teamA + m.teamB, dateIso)
+                            state.flash = T("match_cancelled")
+                            state.bump()
+                        }) { Text(T("cancel_match")) }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAdjust = false }) { Text(T("ok")) } },
+        )
+    }
+    endingMatch?.let { snapshot ->
+        val active = activeList.firstOrNull { it.id == snapshot.id }
+        if (active != null) AlertDialog(
+            onDismissRequest = { endingMatch = null },
+            title = { Text(T("end_sheet_title", "n" to active.court)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(T("board_${active.board}"))
+                    Text("${T("team_a")}: " + active.teamA.joinToString(" / ") { active.names[it] ?: it })
+                    Text("${T("team_b")}: " + active.teamB.joinToString(" / ") { active.names[it] ?: it })
+                    Text(T("running_at", "t" to fmtTime(active.startedAt)))
+                    Text(T("score_optional"))
+                    Text(T("end_hint"), style = MaterialTheme.typography.bodySmall)
+                    ScoreForm(state, active) { endingMatch = null }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { endingMatch = null }) { Text(T("cancel")) } },
+        )
     }
 
     LazyColumn(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
@@ -164,45 +198,92 @@ fun TonightPage(state: AppState) {
             }
         }
 
-        item { Text(T("attendance"), style = MaterialTheme.typography.titleMedium) }
-
         if (members.isEmpty()) {
             item { Text(T("no_members_tonight"), color = MaterialTheme.colorScheme.outline) }
-        } else {
+        } else if (!state.manual.entered) {
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    ordered.chunked(3).forEach { rowMembers ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            rowMembers.forEach { m ->
-                                val r = "%.0f".format(m.ratings[DEFAULT_BOARD] ?: 1000.0)
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Checkbox(
-                                        checked = m.id in checkedIds.value,
-                                        onCheckedChange = { on ->
-                                            if (on) checkedIds.value.add(m.id)
-                                            else checkedIds.value.remove(m.id)
-                                            state.storage.setAttendance(
-                                                club, dateIso, checkedIds.value.toList()
-                                            )
-                                            state.bump()
-                                        },
-                                    )
-                                    Text(
-                                        T("member_chip", "n" to m.name, "r" to r),
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                        }
-                    }
+                AttendancePanel(state, members, checked, onCourt,
+                    activeList.flatMap { m -> (m.teamA + m.teamB).map { it to m.court } }.toMap(), dateIso)
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(T("attendance_summary", "n" to checked.size, "on" to onCourt.size), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                if (!state.manual.entered && activeList.isNotEmpty()) {
+                    OutlinedButton(onClick = { showAdjust = true }) { Text(T("adjust")) }
                 }
             }
         }
+        if (!state.manual.entered) item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = state.assignMode == 0, onClick = { state.assignMode = 0 }, label = { Text(T("mode_auto")) })
+                FilterChip(selected = state.assignMode == 1, onClick = { state.assignMode = 1 }, label = { Text(T("mode_manual")) })
+            }
+        }
+        if (state.assignMode == 1 || state.manual.entered) {
+            item {
+                ManualPanel(state, members, checked, onCourt, activeList, nCourts, dateIso,
+                    onAdjust = { showAdjust = true }, onEnd = { state.warning = ""; endingMatch = it })
+            }
+        }
+        if (state.assignMode == 0 && !state.manual.entered) {
+            val needGen = (1..nCourts).filter { it !in activeByCourt }
+            item {
+                Button(
+                    onClick = {
+                        val boards = needGen.map { c -> c to (boardSelection[c] ?: DEFAULT_BOARD) }
+                        val sugs = suggestMatches(
+                            members, available, state.storage.loadMatches(club), tonight, now, boards,
+                            sessionStart = sessionStart,
+                        )
+                        if (sugs.isEmpty()) {
+                            state.warning = T("not_enough_players")
+                        } else {
+                            for ((court, pairing) in sugs) {
+                                val ids = pairing.teamA + pairing.teamB
+                                val names = ids.associateWith { members[it]?.name ?: it }
+                                val before = ids.associateWith { members[it]?.ratings?.get(pairing.board) ?: 1000.0 }
+                                state.storage.addMatch(
+                                    club, dateIso, court,
+                                    pairing.teamA, pairing.teamB, names, before,
+                                    board = pairing.board,
+                                )
+                            }
+                            state.flash = T("match_started")
+                        }
+                        state.bump()
+                    },
+                    enabled = needGen.isNotEmpty(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                ) {
+                    Text(T("gen_all", "n" to needGen.size))
+                }
+            }
 
-        if (checked.isNotEmpty()) {
+            val maxCourt = maxOf(nCourts, activeByCourt.keys.maxOrNull() ?: 0)
+            val courtRange = 1..maxCourt
+
+            items(courtRange.toList()) { courtNo ->
+                CourtCard(
+                    state = state,
+                    courtNo = courtNo,
+                    active = activeByCourt[courtNo],
+                    members = members,
+                    dateIso = dateIso,
+                    checked = checked,
+                    onCourt = onCourt,
+                    tonight = tonight,
+                    sessionStart = sessionStart,
+                    onEnd = { state.warning = ""; endingMatch = it },
+                )
+            }
+        }
+        if (checked.isNotEmpty()) item {
+            OutlinedButton(onClick = { showDetails = !showDetails }, modifier = Modifier.fillMaxWidth()) {
+                Text(T(if (showDetails) "details_hide" else "details"))
+            }
+        }
+        if (checked.isNotEmpty() && showDetails) {
             val (played, rest) = playerStats(checked, tonight, now, sessionStart)
             val activeCourt = activeByCourt.values.flatMap { m ->
                 (m.teamA + m.teamB).map { it to m.court }
@@ -237,60 +318,10 @@ fun TonightPage(state: AppState) {
             }
         }
 
-        val needGen = (1..nCourts).filter { it !in activeByCourt }
-        item {
-            Button(
-                onClick = {
-                    val boards = needGen.map { c -> c to (boardSelection[c] ?: DEFAULT_BOARD) }
-                    val sugs = suggestMatches(
-                        members, available, state.storage.loadMatches(club), tonight, now, boards,
-                        sessionStart = sessionStart,
-                    )
-                    if (sugs.isEmpty()) {
-                        state.warning = T("not_enough_players")
-                    } else {
-                        for ((court, pairing) in sugs) {
-                            val ids = pairing.teamA + pairing.teamB
-                            val names = ids.associateWith { members[it]?.name ?: it }
-                            val before = ids.associateWith { members[it]?.ratings?.get(pairing.board) ?: 1000.0 }
-                            state.storage.addMatch(
-                                club, dateIso, court,
-                                pairing.teamA, pairing.teamB, names, before,
-                                board = pairing.board,
-                            )
-                        }
-                        state.flash = T("match_started")
-                    }
-                    state.bump()
-                },
-                enabled = needGen.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-            ) {
-                Text(T("gen_all", "n" to needGen.size))
-            }
-        }
-
-        val maxCourt = maxOf(nCourts, activeByCourt.keys.maxOrNull() ?: 0)
-        val courtRange = 1..maxCourt
-
-        items(courtRange.toList()) { courtNo ->
-            CourtCard(
-                state = state,
-                courtNo = courtNo,
-                active = activeByCourt[courtNo],
-                members = members,
-                dateIso = dateIso,
-                checked = checked,
-                onCourt = onCourt,
-                tonight = tonight,
-                revision = revision,
-                sessionStart = sessionStart,
-            )
-        }
     }
 }
 
-private val boardSelection = mutableStateMapOf<Int, String>()
+internal val boardSelection = mutableStateMapOf<Int, String>()
 
 @Composable
 private fun CourtCard(
@@ -302,12 +333,11 @@ private fun CourtCard(
     checked: List<String>,
     onCourt: Set<String>,
     tonight: List<Match>,
-    revision: Int,
     sessionStart: LocalDateTime?,
+    onEnd: (Match) -> Unit,
 ) {
-    val club = state.club
     Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable(enabled = active != null) { active?.let(onEnd) },
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Text("${T("court")} $courtNo", fontWeight = FontWeight.Bold)
@@ -335,9 +365,9 @@ private fun CourtCard(
 }
 
 @Composable
-private fun BoardPicker(courtNo: Int) {
+internal fun BoardPicker(courtNo: Int, doublesOnly: Boolean = false) {
     var expanded by remember { mutableStateOf(false) }
-    val selected = boardSelection[courtNo] ?: DEFAULT_BOARD
+    val selected = boardSelection[courtNo]?.takeIf { !doublesOnly || it.endsWith("double") } ?: DEFAULT_BOARD
     val label = T("board_$selected")
     OutlinedButton(onClick = { expanded = true }) {
         Text("${T("board")}: $label")
@@ -345,7 +375,7 @@ private fun BoardPicker(courtNo: Int) {
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            BOARDS.forEach { b ->
+            BOARDS.filter { !doublesOnly || it.endsWith("double") }.forEach { b ->
                 androidx.compose.material3.DropdownMenuItem(
                     text = { Text(T("board_$b")) },
                     onClick = {
@@ -423,7 +453,7 @@ private fun ActiveMatch(
         )
     }
 
-    ScoreForm(state, active, members)
+    Text(T("end_hint"), style = MaterialTheme.typography.bodySmall)
 
     val onCourtNow = active.teamA + active.teamB
     val othersUsed = onCourt - onCourtNow.toSet()
@@ -454,6 +484,8 @@ private fun ActiveMatch(
                         (members[it]?.name ?: it) to (members[it]?.ratings?.get(board) ?: 1000.0)
                     }
                     state.storage.swapMatchPlayers(club, active.id, mapping, info)
+                    state.requeueManual(mapping.keys.toList(), dateIso)
+                    state.manual = state.manual.copy(queue = state.manual.queue - mapping.values.toSet())
                     val sep = if (Strings.lang == "zh") "、" else ", "
                     state.flash = T(
                         "swapped",
@@ -469,14 +501,7 @@ private fun ActiveMatch(
             enabled = ticked.isNotEmpty() && pool.size >= ticked.size,
             modifier = Modifier.weight(1f),
         ) { Text(T("swap")) }
-        OutlinedButton(
-            onClick = {
-                state.storage.cancelMatch(club, active.id)
-                state.flash = T("match_cancelled")
-                state.bump()
-            },
-            modifier = Modifier.weight(1f),
-        ) { Text(T("cancel_match")) }
+
     }
 }
 
@@ -504,46 +529,54 @@ private fun PlayerRow(
 }
 
 @Composable
-private fun ScoreForm(state: AppState, active: Match, members: Map<String, Member>) {
-    var scoreA by remember(active.id, state.revision) { mutableStateOf("") }
-    var scoreB by remember(active.id, state.revision) { mutableStateOf("") }
+private fun ScoreForm(state: AppState, active: Match, onFinished: () -> Unit) {
+    var scoreA by remember(active.id) { mutableStateOf("") }
+    var scoreB by remember(active.id) { mutableStateOf("") }
+    var error by remember(active.id) { mutableStateOf("") }
 
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-    ) {
-        OutlinedTextField(
-            value = scoreA,
-            onValueChange = { scoreA = it.filter { c -> c.isDigit() }.take(2) },
-            label = { Text("A") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedTextField(
-            value = scoreB,
-            onValueChange = { scoreB = it.filter { c -> c.isDigit() }.take(2) },
-            label = { Text("B") },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = scoreA,
+                onValueChange = { scoreA = it.filter { c -> c.isDigit() }.take(2); error = "" },
+                label = { Text("A") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedTextField(
+                value = scoreB,
+                onValueChange = { scoreB = it.filter { c -> c.isDigit() }.take(2); error = "" },
+                label = { Text("B") },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
         Button(onClick = {
+            if (scoreA.isBlank() && scoreB.isBlank()) {
+                state.storage.finishMatchUnscored(state.club, active.id)
+                state.requeueManual(active.teamA + active.teamB, active.date)
+                state.flash = T("match_ended_noscore")
+                state.bump()
+                onFinished()
+                return@Button
+            }
             val a = scoreA.toIntOrNull()
             val b = scoreB.toIntOrNull()
             if (a == null || b == null) {
-                state.warning = T("score_invalid")
+                error = T("score_invalid")
                 state.bump()
                 return@Button
             }
             if (a == b) {
-                state.warning = T("score_tie")
+                error = T("score_tie")
                 state.bump()
                 return@Button
             }
             val after = try {
                 applyResult(active.ratingsBefore, active.teamA, active.teamB, a, b)
             } catch (e: Exception) {
-                state.warning = T("score_range")
+                error = T("score_range")
                 state.bump()
                 return@Button
             }
@@ -561,6 +594,7 @@ private fun ScoreForm(state: AppState, active: Match, members: Map<String, Membe
                 }
             }
             state.storage.saveMembers(state.club, allMembers)
+            state.requeueManual(active.teamA + active.teamB, active.date)
             val deltas = after.map { (pid, r) ->
                 (active.names[pid] ?: pid) to (r - (active.ratingsBefore[pid] ?: r))
             }.sortedByDescending { it.second }
@@ -570,6 +604,7 @@ private fun ScoreForm(state: AppState, active: Match, members: Map<String, Membe
                 "a" to a, "b" to b, "w" to winner, "changes" to joinDeltas(deltas),
             )
             state.bump()
-        }) { Text(T("submit_score")) }
+            onFinished()
+        }, modifier = Modifier.fillMaxWidth()) { Text(T("end_confirm")) }
     }
 }

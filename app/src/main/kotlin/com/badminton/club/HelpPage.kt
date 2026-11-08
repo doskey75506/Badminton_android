@@ -25,6 +25,7 @@ fun HelpPage(state: AppState) {
                 T("help_tonight_3"),
                 T("help_tonight_4"),
                 T("help_tonight_5"),
+                T("help_tonight_6"),
                 T("help_tonight_note"),
             ),
         ),

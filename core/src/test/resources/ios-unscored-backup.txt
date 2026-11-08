@@ -1,0 +1,7 @@
+Generated with ../../IOS/Badminton/Sources/BadmintonKit on 2026-11-08 using
+Storage.createClub/addMember/setAttendance/addMatch/finishMatchUnscored/exportBytes.
+Contains four female members rated 1200, attendance in reverse member order,
+and one doubles match ended without a score. No personal or production data.
+This fixture verifies Swift JSON omission of nil values and the iOS STORED ZIP
+format against Android's importer. Android exports use DEFLATE/data descriptors;
+a separate manual round trip was checked against the same Swift importer.
